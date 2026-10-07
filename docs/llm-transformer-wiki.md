@@ -1,14 +1,18 @@
-# LLM은 문장을 어떻게 처리하는가 — Token에서 다음 단어까지
+# LLM 동작 원리: 문장 입력부터 다음 Token 생성까지
 
-> **한 줄 요약**
-> LLM은 문장을 **숫자 벡터로 바꾸고 → Token끼리 정보를 주고받게 해서(Transformer) → 다음 Token 하나를 고르는 일**을 반복한다.
->
-> 이 문서는 GPT 계열(Decoder-only) 모델을 기준으로, 짧은 대화 하나가 각 단계에서 **어떤 모양의 데이터로 바뀌고, 그 단계가 어떤 문제를 해결하는지** 따라간다.
-> 문서의 Token ID, 벡터, Attention 수치는 원리를 보여주기 위해 만든 **설명용 값**이다.
+## 요약
+
+- LLM은 입력 문장을 숫자 벡터로 변환하고, Transformer에서 Token 간 정보를 교환한 뒤, 다음 Token 1개를 선택하는 과정을 반복함
+- 각 단계는 직전 단계에서 남은 한계를 해결하기 위해 존재함
+- 설명 대상: GPT, Claude, Llama 등 현재 대부분의 LLM이 사용하는 Decoder-only Transformer 구조
+- 코드 참조: build-nanogpt의 GPT-2 구현. 구조가 공개되어 있고, 최근 LLM과 기본 골격이 같음
+- 문서 내 Token ID, 벡터, 가중치 수치는 설명용 임의 값
+
+<sub>LLM(Large Language Model, 대규모 언어 모델): 대량의 텍스트로 학습해 다음 단어를 예측하는 신경망 모델<br>Transformer(트랜스포머): 2017년 발표된 신경망 구조. 현재 LLM의 기반<br>Decoder-only: Transformer 중 문장 생성 부분만 사용하는 구조. GPT 계열 대부분이 해당</sub>
 
 ---
 
-## 0. 오늘 따라갈 예시
+## 0. 예시 대화
 
 ```text
 사용자: 민수는 사과를 좋아해.
@@ -21,29 +25,32 @@ AI:     과일을 고르기 좋은 곳이네요.
 AI:     사과를 추천해요.
 ```
 
-마지막 질문에는 `민수`도 `사과`도 없다. 그런데 모델은 `그 사람 = 민수`, `민수가 좋아하는 것 = 사과`를 연결해 답한다.
-**이 연결이 어떤 계산으로 만들어지는지**가 이 문서의 전부다.
+- 마지막 질문에 민수, 사과 모두 없음
+- 모델은 그 사람 = 민수, 민수가 좋아하는 것 = 사과를 연결해 답변 생성
+- 이 문서는 이 연결이 만들어지는 계산 과정을 단계별로 설명
 
-### 전체 흐름 미리 보기
+### 전체 흐름
 
-| 단계 | 데이터 모양 | 해결하는 문제 |
+| 단계 | 입력 → 출력 | 해결하는 한계 |
 |---|---|---|
-| 1. Tokenizer | 문장 → 정수 ID 목록 | 컴퓨터는 글자를 계산할 수 없다 |
-| 2. Embedding | ID → 숫자 벡터 | 번호에는 의미가 없다 |
-| 3. Position | 벡터 + 위치 벡터 | 순서를 모른다 |
-| 4~5. Attention (Q·K·V) | 벡터 → 문맥이 섞인 벡터 | 각 Token이 서로를 모른다 |
-| 6. Multi-Head | 여러 관점의 Attention | 관계가 한 종류가 아니다 |
-| 7. FFN | 벡터 → 가공된 벡터 | 모아 온 정보를 정리해야 한다 |
-| 8. Residual · LayerNorm | 원본 + 변화량 | 깊게 쌓으면 원본이 사라지고 불안정하다 |
-| 9. Layer 반복 | 같은 Block × N | 한 번으로는 먼 관계까지 못 잇는다 |
-| 10. 출력 | 벡터 → 단어별 점수 → 확률 | 결국 단어 하나를 골라야 한다 |
-| 11. 생성 반복 | 고른 Token을 붙이고 다시 | 답은 한 단어가 아니다 |
+| 1. Tokenizer | 문장 → 정수 ID 목록 | 컴퓨터는 글자를 직접 계산할 수 없음 |
+| 2. Embedding | ID → 벡터 | ID 번호에는 의미 정보가 없음 |
+| 3. Position | 벡터 → 위치 정보가 더해진 벡터 | 순서 정보가 없음 |
+| 5. Self-Attention | 벡터 → 다른 Token 정보가 반영된 벡터 | Token끼리 정보를 주고받지 못함 |
+| 6. Multi-Head | Attention 1개 → 여러 개 | 한 번에 한 종류의 관계만 참조 가능 |
+| 7. FFN | 벡터 → 변환된 벡터 | 가져온 정보가 섞인 상태로 남음 |
+| 8. Residual, LayerNorm | 원래 벡터 + 변화량 | Layer가 깊어지면 정보 손실, 학습 불안정 |
+| 9. Layer 반복 | Block × N | 한 번으로는 여러 단계 거친 관계 연결 불가 |
+| 10. 출력 | 벡터 → Token별 확률 | 최종적으로 Token 1개를 골라야 함 |
+| 11. 생성 반복 | 선택한 Token을 붙여 재계산 | 답변은 여러 Token으로 구성됨 |
+
+4장은 3장과 5장의 순서가 정해진 배경(RNN → Transformer) 설명
 
 ---
 
-## 1. Tokenizer — 문장을 번호로 바꾼다
+## 1. Tokenizer: 문장 → Token ID
 
-모델은 글자를 직접 계산하지 못한다. 그래서 먼저 문장을 **Token(모델이 다루는 최소 단위)**으로 자르고, 각 Token에 **ID(어휘 사전의 번호)**를 붙인다.
+> 문장을 Token 단위로 자르고 각 Token에 사전 번호(ID)를 부여
 
 ```text
 입력:   민수는 사과를 좋아해.
@@ -52,335 +59,406 @@ Token:  [민수] [는] [사과] [를] [좋아해] [.]
 ID:     [ 12 ] [ 7] [ 31 ] [ 8] [  45  ] [2]
 ```
 
-대화 전체가 이렇게 하나의 긴 ID 목록이 된다.
+- 대화 전체는 역할 구분용 특수 Token과 함께 하나의 ID 목록으로 이어 붙여 입력됨
 
 ```text
-민수는 사과를 좋아해. ... 그럼 그 사람에게 뭘 사주면 좋을까?
-→ [12, 7, 31, 8, 45, 2, ..., 88, 103, 57, 19, 64, 77, 5]
+<사용자> 민수는 사과를 좋아해. <AI> 민수는 ... <사용자> 그럼 그 사람에게 뭘 사주면 좋을까? <AI>
+→ [900, 12, 7, 31, 8, 45, 2, 901, 12, 7, ..., 900, 88, 103, 57, 19, 64, 77, 5, 901]
 ```
 
-**바뀐 것:** 문자열 → 정수 목록. 이제 컴퓨터가 다룰 수 있다.
+- 변화: 문자열 → 정수 목록
+- 남은 한계: ID는 사전 내 위치 번호일 뿐 의미 정보 없음
 
-**남은 문제:** `31`은 사전에서 `사과`가 놓인 **자리 번호**일 뿐이다. 번호에는 의미가 없다.
+실제 LLM
+- 단어 단위가 아니라 자주 함께 등장하는 글자 조합 단위로 분리 (BPE 계열)
+- 사전 크기: GPT-2 50,257개 / GPT-4 약 10만 개 / Llama 3 128,256개
+- 영어 위주로 만든 Tokenizer는 한글을 더 잘게 분리 → 같은 내용도 Token 수 증가
 
-> 실제 GPT-2 Tokenizer(BPE)는 영어 위주로 학습되어 한글 한 글자를 여러 Token으로 쪼개기도 한다. 자르는 방식은 모델마다 다르지만, "문장 → ID 목록"이라는 역할은 같다.
+<sub>Token(토큰): 모델이 처리하는 텍스트 조각. 단어 또는 단어의 일부<br>Tokenizer(토크나이저): 문장을 Token으로 자르고 ID로 바꾸는 도구<br>Vocabulary(어휘 사전): 모델이 아는 Token 전체 목록<br>BPE(Byte Pair Encoding): 자주 붙어 나오는 글자 쌍을 반복해서 합쳐 Token 사전을 만드는 방식</sub>
 
 ---
 
-## 2. Embedding — 번호를 '의미를 담을 수 있는 좌표'로 바꾼다
+## 2. Embedding: Token ID → 벡터
 
-### Before: ID만 있을 때
+> ID를 실수 여러 개로 구성된 벡터로 변환. Token 간 유사도 계산이 가능해짐
+
+### 변환 전: ID
 
 ```text
-민수 → 12
-사과 → 31
+민수   → 12
+사과   → 31
 바나나 → 9137
 ```
 
-숫자 차이로만 보면 `사과(31)`는 `바나나(9137)`보다 `민수(12)`에 훨씬 가깝다. 말이 안 된다.
-ID는 이름표일 뿐이라서 **"무엇과 무엇이 비슷한가"를 계산할 수 없다.**
+- ID 차이 기준으로는 사과(31)가 바나나(9137)보다 민수(12)에 가까움
+- ID 간 거리는 의미와 무관 → 유사도 계산 불가
 
-### After: 벡터로 바꾸면
+### 변환 후: 벡터
 
-Embedding은 ID를 번호로 찾아 **숫자 여러 개짜리 벡터**를 꺼내는 표(lookup table)다. (설명을 위해 3차원으로 줄임)
+- Embedding 표에서 ID 번호에 해당하는 행을 조회
+- 아래는 설명을 위해 3차원으로 축소한 예
 
 ```text
 사과   → [0.9, 0.8, 0.1]
 바나나 → [0.8, 0.9, 0.2]
 민수   → [0.1, 0.2, 0.9]
+
+사과 · 바나나 = 0.9×0.8 + 0.8×0.9 + 0.1×0.2 = 1.46   (유사)
+사과 · 민수   = 0.9×0.1 + 0.8×0.2 + 0.1×0.9 = 0.34   (비유사)
 ```
 
-이제 두 벡터가 얼마나 같은 방향인지 **내적(곱해서 더하기)**으로 계산할 수 있다.
-
-```text
-사과 · 바나나 = 0.9×0.8 + 0.8×0.9 + 0.1×0.2 = 1.46   ← 가깝다
-사과 · 민수   = 0.9×0.1 + 0.8×0.2 + 0.1×0.9 = 0.34   ← 멀다
-```
-
-| | ID (Before) | 벡터 (After) |
+| 구분 | ID | 벡터 |
 |---|---|---|
-| 형태 | 정수 1개 | 연속적인 숫자 여러 개 (GPT-2 small: 768개) |
-| 비슷함 계산 | 불가능 | 내적으로 가능 |
-| 학습 | 고정된 번호 | 학습하면서 값이 조금씩 조정됨 |
+| 형태 | 정수 1개 | 실수 여러 개 |
+| 유사도 계산 | 불가 | 내적으로 가능 |
+| 값 결정 방식 | 사전 순서로 고정 | 학습으로 조정 |
 
-**해결한 문제:** Token 사이의 관계를 **숫자로 계산할 수 있게** 됐다. 뒤에 나올 Attention도 결국 이 내적 계산이다.
-각 칸에 `과일`, `빨간색` 같은 뜻을 사람이 정해 둔 것은 아니다. 학습을 통해 비슷하게 쓰이는 Token끼리 가까워지도록 값이 맞춰진다.
+- 각 차원의 의미는 사람이 지정하지 않음. 학습 과정에서 비슷하게 쓰이는 Token끼리 가까워지도록 값이 조정됨
+- 이후 Attention도 이 내적 계산을 사용
+- 벡터 차원 수: GPT-2 small 768 / GPT-3 12,288 / Llama 3 8B 4,096
 
-**남은 문제 두 가지**
+### 남은 한계
 
-1. **문맥을 모른다.** `사과를 먹었다`의 사과(과일)와 `사과를 했다`의 사과(사죄)가 **똑같은 벡터**다. 표에서 31번 줄을 꺼냈을 뿐이기 때문이다.
-2. **순서를 모른다.** 벡터에는 이 Token이 문장의 몇 번째인지 들어 있지 않다.
+- 문맥 미반영: 배가 고파서 사과를 먹었다(과일), 약속에 늦어서 사과를 했다(사죄)의 사과가 같은 벡터
+- 순서 미반영: 문장 내 위치 정보 없음
+
+<sub>벡터: 여러 개의 숫자를 순서대로 나열한 값<br>Embedding(임베딩): Token ID를 벡터로 바꾸는 조회 표. 표의 값도 학습으로 결정<br>내적: 두 벡터의 같은 위치 값끼리 곱해서 더한 값. 클수록 두 벡터의 방향이 비슷함</sub>
 
 ---
 
-## 3. Position — 순서 정보를 더한다
+## 3. Position: 위치 정보 추가
 
-### Before: 위치 정보가 없을 때
+> Token 벡터에 위치 정보를 더해, 같은 Token도 위치가 다르면 다른 벡터가 되도록 함
 
-```text
-문장 A:  사람이 사과를 먹는다.   →  [사람] [이] [사과] [를] [먹는다]
-문장 B:  사과가 사람을 먹는다.   →  [사과] [가] [사람] [을] [먹는다]
-```
-
-Transformer는 문장을 한 단어씩 차례로 읽지 않고 **모든 Token을 한꺼번에** 받는다. (이유는 4에서)
-위치 정보가 없으면 모델 눈에는 두 문장 모두 이렇게 보인다.
+### 반영 전
 
 ```text
-{ 사람, 사과, 먹는다, 주어 조사(이/가), 목적어 조사(을/를) }
+문장 A: 사람이 사과를 먹는다.  →  [사람] [이] [사과] [를] [먹는다]
+문장 B: 사과가 사람을 먹는다.  →  [사과] [가] [사람] [을] [먹는다]
 ```
 
-재료는 같다. 그런데 **주어 조사가 `사람`에 붙었는지 `사과`에 붙었는지** 알 수 없다. 누가 누구를 먹는지 구분이 안 된다.
+- Transformer는 Token을 앞에서부터 하나씩 읽지 않고 전체를 한 번에 입력받음 (이유는 4장)
+- 위치 정보가 없으면 두 문장이 같은 Token 집합으로 처리됨
 
-### After: 위치 벡터를 더하면
+```text
+{ 사람, 사과, 먹는다, 주격 조사(이/가), 목적격 조사(을/를) }
+```
 
-각 자리(0번째, 1번째, …)마다 **위치 벡터**를 하나씩 두고, Token 벡터에 더한다.
+- 주격 조사가 사람에 붙었는지 사과에 붙었는지 판단 불가 → 두 문장 구분 불가
+
+### 반영 후
 
 ```text
 Transformer 입력 = Token 벡터 + 위치 벡터
 
-문장 A:  사람+pos0, 이+pos1, 사과+pos2, 를+pos3, 먹는다+pos4
-문장 B:  사과+pos0, 가+pos1, 사람+pos2, 을+pos3, 먹는다+pos4
+문장 A: 사람+위치0, 이+위치1, 사과+위치2, 를+위치3, 먹는다+위치4
+문장 B: 사과+위치0, 가+위치1, 사람+위치2, 을+위치3, 먹는다+위치4
 ```
 
-같은 `사과`라도 0번째 자리의 사과와 2번째 자리의 사과는 **다른 벡터**가 된다.
-이제 "`이`는 바로 앞의 `사람`에 붙어 있다"는 관계를 계산할 수 있고, 두 문장이 구분된다.
+- 0번 위치의 사과와 2번 위치의 사과가 서로 다른 벡터가 됨
+- 주격 조사가 바로 앞 Token에 붙는다는 관계 계산 가능 → 두 문장 구분 가능
 
-**해결한 문제:** 순서.
-**남은 문제:** 아직 각 Token은 **자기 벡터만** 가지고 있다. `그 사람`은 여전히 자기가 누구를 가리키는지 모른다.
+### 남은 한계
 
-> GPT-2는 위치 벡터도 학습으로 만든다(learned position embedding). 원 논문은 sin/cos 공식을, 최근 모델은 RoPE 같은 방식을 쓰지만 "순서 정보를 넣는다"는 목적은 같다.
+- 각 Token 벡터는 자기 정보만 보유
+- 마지막 질문의 사람이 누구를 가리키는지 알 수 없음
+
+실제 LLM
+- 원 논문(2017): sin, cos 함수로 위치 벡터 계산
+- GPT-2, GPT-3: 위치별 벡터를 학습으로 결정
+- Llama, Qwen, Mistral 등 최근 공개 모델 다수: RoPE 사용. 더하는 대신 Q, K 벡터를 위치만큼 회전시켜 Token 간 상대 거리 반영. 학습 때보다 긴 입력으로 확장하기 쉬움
+
+<sub>RoPE(Rotary Position Embedding, 회전 위치 임베딩): 위치에 비례하는 각도로 벡터를 회전시켜 위치 정보를 넣는 방식. Q, K는 5장 참조</sub>
 
 ---
 
-## 4. 잠깐 — 왜 이런 순서로 만들어졌을까?
+## 4. RNN에서 Transformer로: Attention과 Position의 관계
 
-여기까지 오면 "애초에 순서대로 읽으면 위치를 따로 넣을 필요가 없지 않나?"라는 의문이 든다. 실제로 Transformer 이전 모델(RNN)은 그렇게 동작했다.
+> Transformer는 거리가 멀수록 문맥이 약해지는 RNN의 한계를 Attention으로 해결했고, 그 과정에서 사라진 순서 정보를 입력 단계의 Position으로 보완함
 
-### Transformer 이전: 한 단어씩 순서대로 읽기 (RNN)
+### Transformer 이전: RNN
 
 ```text
 민수 → 는 → 사과 → 를 → 좋아해 → ... → 그 → 사람 → 에게 → 뭘 → 사주면
- [기억] → [기억] → [기억] → ... (매 단계 기억을 덮어쓰며 전달) ... → [기억]
+상태 → 상태 → 상태 → ... (매 단계 이전 상태를 갱신해 전달) ... → 상태
 ```
 
-- 순서는 자연스럽게 안다.
-- 하지만 앞 내용을 **작은 기억 하나에 계속 덮어쓰며** 넘긴다. 문장이 길어질수록 처음의 `민수`, `사과`는 **흐려진다.**
-- 한 단어를 읽어야 다음 단어로 넘어가므로 병렬 계산도 어렵다.
+- Token을 앞에서부터 하나씩 처리하며, 이전 내용을 고정 크기 상태값 하나에 누적해 전달
+- 순서 정보는 처리 순서로 자연스럽게 반영됨
+- 한계 1: 입력이 길수록 앞부분 정보가 약해짐. 예시에서 사주면까지 처리하는 시점에는 첫 문장의 민수, 사과 정보가 약해진 상태
+- 한계 2: 앞 Token 처리가 끝나야 다음 Token 처리 가능 → GPU 병렬 계산이 어려움 → 모델 규모 확대가 어려움
 
-### Transformer (2017, "Attention Is All You Need")
+### Transformer (2017, Attention Is All You Need)
 
-```text
-그 사람 ──직접 연결──> 민수, 사과, 과일 가게, ... (거리와 상관없이 전부)
-```
+- RNN 제거
+- 각 Token이 다른 모든 Token을 직접 참조하고, 참조 비율을 가중치로 계산 (Attention)
+- 세 문장 앞의 사과도 바로 앞 Token과 같은 1단계로 참조 → 거리로 인한 정보 손실 해결
+- 모든 Token을 동시에 계산 → 병렬 처리 가능
+- 대신 순서 정보가 사라짐 → 입력 단계에서 위치 정보를 먼저 더함 (3장)
 
-- RNN을 빼고, **모든 Token이 다른 모든 Token을 직접 보고, 얼마나 참고할지 가중치로 정하는** 방식(Attention)만 남겼다.
-- 3문장 전의 `사과`도 바로 옆 단어와 똑같이 한 번에 닿는다 → **문맥이 흐려지는 문제 해결.**
-- 대신 한꺼번에 보니 **순서를 잃는다** → 그래서 **입력 단계에서 위치 정보를 먼저 더해 준다.** (3번 단계)
-
-| | RNN | Attention만 | Attention + Position (Transformer) |
+| 구분 | RNN | Attention만 사용 | Attention + Position |
 |---|---|---|---|
-| 먼 문맥 | 흐려짐 | 그대로 닿음 | 그대로 닿음 |
-| 순서 | 앎 | 모름 | 앎 |
+| 먼 문맥 | 약해짐 | 유지 | 유지 |
+| 순서 정보 | 있음 | 없음 | 있음 |
 | 병렬 계산 | 어려움 | 가능 | 가능 |
 
-즉 **Position은 Attention의 약점을 메우기 위해 그 앞에 놓인 단계**다.
+### 이후 변화
+
+- 병렬 계산이 가능해지면서 모델 크기와 학습 데이터를 크게 늘릴 수 있게 됨
+- 모델 크기, 데이터, 계산량이 늘수록 성능이 일정하게 향상되는 경향 확인 (Scaling Law, 2020)
+
+```text
+2017  Transformer 발표 (번역 모델)
+2018  GPT-1      1.17억 파라미터
+2019  GPT-2      15억
+2020  GPT-3      1,750억
+2022  ChatGPT    대화형 서비스 출시
+2023~ GPT-4, Claude, Llama, Gemini 등
+```
+
+- 기본 구조(Token → Embedding → Transformer Block 반복 → 다음 Token 예측)는 GPT-1부터 현재까지 동일
+- 이후 변화는 주로 규모 확대와 세부 구성 요소 개선 (14장 비교표)
+
+<sub>RNN(Recurrent Neural Network, 순환 신경망): 입력을 순서대로 하나씩 처리하며 이전 상태를 다음 단계로 넘기는 신경망<br>Attention(어텐션): 각 Token이 다른 Token을 얼마나 참고할지 가중치로 계산해 정보를 가져오는 연산<br>GPU: 대량의 계산을 동시에 처리하는 연산 장치<br>파라미터: 학습으로 정해지는 모델 내부의 숫자. 모델 크기의 기준<br>Scaling Law(스케일링 법칙): 규모가 커질수록 성능이 예측 가능한 비율로 향상된다는 관찰 결과</sub>
 
 ---
 
-## 5. Self-Attention — Q, K, V로 Token끼리 정보를 주고받는다
+## 5. Self-Attention: Query, Key, Value
 
-이제 Token들이 서로의 정보를 가져올 차례다. 모든 Token은 자기 벡터에서 세 가지를 만든다.
+> 각 Token이 차례로 Query가 되어 다른 Token들의 Key와 비교하고, 관련도 비율만큼 Value를 가져와 자기 벡터에 더함
 
-| | 비유 | 역할 |
+### Q, K, V 정의
+
+| 구분 | 의미 | 예시 (사람 Token 기준) |
 |---|---|---|
-| **Q (Query)** | 내 질문 | "나는 지금 어떤 정보가 필요하지?" |
-| **K (Key)** | 내 이름표 | "나는 이런 정보를 가진 Token이야" |
-| **V (Value)** | 내 실제 내용 | 선택되면 상대에게 전달할 정보 |
+| Query | 현재 Token이 찾는 정보 | 가리키는 대상이 누구인가 |
+| Key | 각 Token이 가진 정보의 특징. Query와 비교하는 데 사용 | 민수: 사람 이름 |
+| Value | 선택되었을 때 실제로 전달되는 정보 | 민수에 관한 정보 |
 
-세 값 모두 같은 벡터에 서로 다른 선형 변환(가중치 행렬)을 곱해서 만든다. 이 행렬도 학습으로 정해진다.
+- 세 값 모두 같은 Token 벡터에 서로 다른 가중치 행렬을 곱해 생성
+- 행렬 값은 학습으로 결정
 
-### 동작 방식: 모두가 돌아가며 질문자가 된다
+### 계산 순서
 
-1. 한 Token이 **Query**가 된다.
-2. 자기 Q를 앞쪽 모든 Token이 이미 가진 **Key**와 비교해 점수를 낸다(내적).
-3. 점수를 Softmax로 **합이 1인 비율**로 바꾼다.
-4. 그 비율대로 각 Token의 **Value**를 가져와 더한다 → 내 벡터에 **쌓인다.**
-5. 다음 Token이 Query가 되어 1~4를 반복한다. (실제로는 모든 Token이 **동시에** 계산된다)
+1. 한 Token이 Query가 됨
+2. Query와 각 Token의 Key를 내적 → 관련도 점수
+3. Softmax로 점수를 합이 1인 비율로 변환
+4. 비율만큼 각 Token의 Value를 곱해 합산 → 현재 Token 벡터에 더함
+5. 모든 Token이 Query가 되어 1~4 수행 (실제로는 행렬 연산으로 동시에 계산)
 
-GPT는 **자기 자신과 앞쪽 Token만** 본다(Causal Attention). 다음 단어를 맞혀야 하므로 뒤쪽 정답을 미리 보면 안 되기 때문이다.
+- 참조 범위: 자기 자신과 앞쪽 Token만 (Causal Attention)
+- 이유: 학습 시 다음 Token이 정답이므로, 뒤쪽 Token을 참조하면 정답을 미리 보는 것과 같음
+- 수식: softmax(Q·Kᵀ / √d) · V
+- √d로 나누는 이유: 벡터 차원이 클수록 내적 값이 커져 Softmax 결과가 한 Token에 몰리는 현상 방지
 
-### 예시 ①: `사람`이 Query가 될 때
+<sub>Self-Attention(셀프 어텐션): 같은 입력 안의 Token끼리 수행하는 Attention<br>Query / Key / Value: 질의 / 키 / 값. 줄여서 Q, K, V<br>Softmax(소프트맥스): 점수 목록을 0~1 사이, 합이 1인 비율로 바꾸는 함수<br>Causal Attention(인과적 어텐션): 뒤쪽 Token을 가려 앞쪽만 참조하도록 제한한 Attention. 가리는 처리를 Causal Mask라고 함<br>d: Q, K 벡터의 차원 수</sub>
 
-```text
-Q(사람): "나는 누구를 가리키지?"
-
-비교 대상의 K   점수(Q·K)  →  Softmax 비율
-민수            5.0             0.70
-그              3.2             0.12
-과일 가게       2.8             0.08
-사과            2.4             0.05
-기타            …               0.05
-
-Attention 결과(사람) = 0.70×V민수 + 0.12×V그 + 0.08×V가게 + 0.05×V사과 + …
-→ 이 결과가 원래 '사람' 벡터에 더해진다 (8번 Residual)
-```
-
-- **Before:** `사람` = 아무나 가리킬 수 있는 일반적인 '사람'
-- **After:** `사람` = **민수에 대한 정보가 70% 섞인** 벡터 → "그 사람 = 민수"가 해결됨
-
-### 예시 ②: `사주면`이 Query가 될 때
+### 예시 1: 사람이 Query일 때
 
 ```text
-Q(사주면): "무엇을 줘야 하지? 상대가 좋아하는 게 뭐지?"
+Query(사람): 가리키는 대상이 누구인가
 
-비교 대상의 K   Softmax 비율
-사과            0.55
-좋아해          0.20
-사람(=민수 정보가 섞임)  0.15
-기타            0.10
+비교 대상 Key   점수(Q·K)   Softmax 비율
+민수            5.0          0.70
+그              3.2          0.12
+과일 가게       2.8          0.08
+사과            2.4          0.05
+기타            ...          0.05
+
+Attention 결과(사람) = 0.70×V(민수) + 0.12×V(그) + 0.08×V(과일 가게) + 0.05×V(사과) + ...
+→ 원래 사람 벡터에 더해짐 (8장 Residual)
 ```
 
-- **Before:** `사주면` = '무언가를 사 준다'는 일반적인 뜻
-- **After:** `사주면` = **사과·좋아함 정보가 쌓인** 벡터
+- 적용 전: 사람 = 대상이 정해지지 않은 일반 명사
+- 적용 후: 사람 = 민수 정보가 70% 반영된 벡터 → 그 사람 = 민수 연결
 
-이렇게 **각 Token이 질문하고 → 필요한 Token의 Value를 가져와 → 자기 벡터에 쌓는** 과정이 Attention이다.
-2에서 남은 문제(`사과를 먹었다` vs `사과를 했다`)도 여기서 풀린다. `사과`가 Query가 되어 `먹었다`의 Value를 가져오면 과일 쪽으로, `했다`의 Value를 가져오면 사죄 쪽으로 벡터가 달라진다.
+### 예시 2: 사주면이 Query일 때
 
-**핵심: 가중치를 정하는 것은 거리가 아니라 Q와 K의 관계다.** 그래서 3문장 전의 `민수`, `사과`도 크게 반영될 수 있다.
+```text
+Query(사주면): 무엇을 사 줘야 하는가
 
-> 식으로 쓰면 `Attention(Q, K, V) = softmax(Q·Kᵀ / √d) · V`. `√d`로 나누는 것은 점수가 너무 커져 Softmax가 한쪽으로 쏠리는 것을 막기 위해서다.
+비교 대상 Key            Softmax 비율
+사과                     0.55
+좋아해                   0.20
+사람 (민수 정보 반영됨)  0.15
+기타                     0.10
+```
+
+- 적용 전: 사주면 = 무언가를 사 준다는 일반 의미
+- 적용 후: 사주면 = 사과, 좋아함 정보가 반영된 벡터
+
+### 2장 한계 해결
+
+- 배가 고파서 사과를: 사과가 배가 고파서의 Value를 가져옴 → 과일 의미 벡터
+- 약속에 늦어서 사과를: 사과가 약속에 늦어서의 Value를 가져옴 → 사죄 의미 벡터
+- 같은 Token이라도 앞 문맥에 따라 다른 벡터가 됨
+
+### 참조 비율 결정 기준
+
+- 비율은 거리가 아니라 Query와 Key의 관련도로 결정
+- 세 문장 앞의 민수, 사과도 높은 비율로 반영 가능
 
 ---
 
-## 6. Multi-Head — 여러 관점으로 동시에 본다
+## 6. Multi-Head Attention
 
-### Before: Attention이 하나뿐이면
+> Attention을 여러 개(Head)로 나눠 병렬 수행. 한 Token이 여러 종류의 관계를 동시에 참조
 
-한 번의 Softmax로 비율을 하나만 정할 수 있다. `사주면`이 "누구에게?"(민수)와 "무엇을?"(사과)을 **동시에** 알고 싶어도, 한 비율 안에서 나눠 가져야 하니 둘 다 흐릿해진다.
+### Head가 1개일 때
 
-### After: Head를 여러 개 두면
+- Softmax 비율 분포가 1개뿐
+- 사주면이 대상(민수)과 대상이 좋아하는 것(사과)을 동시에 참조하려면 하나의 비율을 나눠 써야 함 → 각 정보가 약하게 반영
 
-벡터를 여러 조각으로 나눠 **각 조각(Head)이 독립적으로 Attention**을 계산한 뒤 다시 합친다.
+### Head가 여러 개일 때
 
 ```text
-            ┌ Head 1: "누구 얘기지?"     → 민수에 집중
-사주면 ─────┼ Head 2: "무엇을?"          → 사과에 집중
-            ├ Head 3: "문장 구조상 주어는?" → 앞 문장 구조에 집중
-            └ ...
-                     ↓ 합치기(concat) + 선형 변환
-                새 벡터(사주면)
+          ┌ Head 1: 대상이 누구인가        → 민수 비율 높음
+사주면 ───┼ Head 2: 무엇을 원하는가        → 사과 비율 높음
+          ├ Head 3: 문장 구조 (주어, 목적어) → 문법 관계
+          └ ...
+                   ↓ 결과를 이어 붙인 뒤 Linear
+             사주면의 새 벡터
 ```
 
-GPT-2 small: 768차원 = **12 Head × 64차원**.
-각 Head가 어떤 관계를 볼지는 사람이 정하지 않는다. 학습 중에 자연스럽게 나뉜다. (위 Head 역할은 이해를 돕기 위한 예시)
+- 벡터 차원을 Head 수만큼 나눠 각 Head가 독립적으로 Q, K, V 계산
+- 각 Head가 보는 관계는 학습으로 결정됨 (위 역할 구분은 설명용)
+- Head 수: GPT-2 small 12개 (768 = 12 × 64) / GPT-3 96개 / Llama 3 8B 32개
 
-**해결한 문제:** 여러 종류의 관계를 한 번에 가져온다.
+실제 LLM
+- 최근 모델 다수가 GQA 사용: 여러 Query Head가 Key, Value Head를 공유
+- 생성 시 저장할 Key, Value 양이 줄어 속도와 메모리 사용량 개선 (Llama 3 8B: Query Head 32개, Key/Value Head 8개)
+
+<sub>Head(헤드): Q, K, V 계산 1세트<br>Linear(선형 변환): 벡터에 가중치 행렬을 곱하는 연산<br>GQA(Grouped-Query Attention, 그룹 쿼리 어텐션): 여러 Query Head가 Key, Value를 나눠 쓰는 방식</sub>
 
 ---
 
-## 7. FFN — 모아 온 정보를 각자 가공한다
+## 7. FFN: Token별 변환
 
-Attention은 **다른 Token에게서 정보를 가져오는** 단계다. 가져온 정보는 아직 여러 Value가 섞여 있는 상태다.
-FFN(Feed-Forward Network)은 **다른 Token을 보지 않고**, 각 Token이 자기 벡터만 가지고 가공하는 단계다.
+> Attention은 다른 Token에서 정보를 가져오는 단계, FFN은 각 Token이 가져온 정보를 개별적으로 변환하는 단계
 
-```text
-벡터(768) → Linear(768→3072, 넓게 펼침) → GELU(비선형 변환) → Linear(3072→768, 다시 압축)
-```
-
-| | Attention | FFN |
+| 구분 | Attention | FFN |
 |---|---|---|
-| 비유 | 회의: 다른 사람 의견 듣기 | 회의 후 자기 노트 정리 |
-| 다른 Token을 보나 | 본다 | 안 본다 |
-| 하는 일 | 정보 **수집** | 수집한 정보 **가공** |
+| 다른 Token 참조 | 함 | 안 함 |
+| 역할 | 정보 수집 | 수집한 정보 변환 |
+| 연산 | Q·K 비교, Value 가중합 | Linear → 활성화 함수 → Linear |
 
-예: Attention 뒤의 `사주면` 벡터에는 [민수 + 사과 + 좋아함 + 과일 가게]가 뒤섞여 있다. FFN은 이것을 다음 계산에 쓰기 좋은 특징(예: "추천 대상이 정해졌다")으로 바꾼다.
-Transformer Block 파라미터의 약 2/3가 FFN에 있으며, 학습한 패턴과 지식의 상당 부분이 이 가중치에 담긴다고 본다.
+- 예: Attention 이후 사주면 벡터에는 민수, 사과, 좋아함, 과일 가게 정보가 섞여 있음 → FFN이 다음 Layer에서 사용하기 좋은 형태로 변환
+
+```text
+GPT-2:    Linear(768 → 3072) → GELU → Linear(3072 → 768)
+Llama 등: SwiGLU. Linear 2개의 결과를 곱한 뒤 Linear로 원래 차원 복원
+```
+
+- 파라미터 비중: Block 파라미터의 절반 이상 (GPT-2 약 2/3, Llama 3 8B 약 80%)
+- 학습한 사실, 패턴의 상당 부분이 FFN 가중치에 저장된다는 분석 연구 있음
+
+실제 LLM
+- 일부 최신 모델(Mixtral, DeepSeek 등)은 MoE 사용
+- FFN을 여러 개 두고 Token마다 일부만 계산 → 전체 파라미터는 늘리고 Token당 계산량은 유지
+
+<sub>FFN(Feed-Forward Network, 피드포워드 신경망): Linear와 활성화 함수로 구성된 신경망. Token마다 독립적으로 적용<br>활성화 함수(GELU, SwiGLU 등): Linear 사이에 넣어 비선형 변환을 가능하게 하는 함수. 없으면 Linear를 여러 번 거쳐도 Linear 1번과 같은 결과<br>MoE(Mixture of Experts, 전문가 혼합): 여러 FFN 중 일부만 선택해 계산하는 구조</sub>
 
 ---
 
-## 8. Residual과 LayerNorm — 깊게 쌓아도 무너지지 않게
+## 8. Residual Connection, LayerNorm
 
-### Residual Connection (잔차 연결)
+> Layer를 깊게 쌓아도 원래 정보가 유지되고 학습이 안정되도록 하는 구조
+
+### Residual Connection
 
 ```text
-x = x + Attention(LayerNorm(x))
-x = x + FFN(LayerNorm(x))
+x = x + Attention(Norm(x))
+x = x + FFN(Norm(x))
 ```
 
-- **Before:** 각 단계가 벡터를 통째로 새로 만들면, 12번·48번 거치는 동안 원래 `사과`라는 정보가 덮어써져 사라질 수 있고, 학습 신호도 앞쪽까지 잘 전달되지 않는다.
-- **After:** 원래 벡터는 그대로 두고 **변화량만 더한다.** 원본이 지나가는 고속도로가 생기는 셈이다.
+- 적용 전: 각 단계가 벡터를 새로 생성 → Layer를 거칠수록 Token 원래 정보 손실, 앞쪽 Layer까지 학습 신호 전달 약화
+- 적용 후: 기존 벡터를 유지하고 각 단계의 결과만 더함 → 원래 정보 보존, 수십~100여 개 Layer 학습 가능
 
-### LayerNorm (층 정규화)
+### LayerNorm
 
-- 각 벡터의 값 크기를 일정한 범위로 맞춘다.
-- 층을 많이 거쳐도 값이 폭주하거나 0으로 줄어들지 않게 해서 계산을 안정시킨다.
+- 각 Token 벡터 값의 평균과 크기를 일정 범위로 조정
+- Layer를 거치며 값이 지나치게 커지거나 작아지는 현상 방지
 
-여기까지가 **Transformer Block 하나**다.
+실제 LLM
+- 최근 모델 다수는 계산이 더 단순한 RMSNorm 사용 (Llama 등)
+
+### Transformer Block 1개 구성
 
 ```text
 입력 x
- ├─ LayerNorm → Attention ─┐
- └──────────────────────(+)┘  x = x + Attention(...)
- ├─ LayerNorm → FFN ───────┐
- └──────────────────────(+)┘  x = x + FFN(...)
+ → Norm → Attention → x에 더함
+ → Norm → FFN       → x에 더함
 출력 x
 ```
 
+<sub>Residual Connection(잔차 연결): 입력을 출력에 그대로 더하는 연결<br>LayerNorm(Layer Normalization, 층 정규화): 벡터 값의 평균과 크기를 맞추는 연산<br>RMSNorm(Root Mean Square Normalization): 평균 조정 없이 크기만 맞추는 정규화<br>Block(블록): Attention, FFN, Residual, Norm을 묶은 반복 단위. Layer와 같은 의미로 사용</sub>
+
 ---
 
-## 9. Layer 반복 — 정보가 여러 번 건너가며 쌓인다
+## 9. Layer 반복
 
-같은 구조의 Block을 여러 번 쌓는다. (GPT-2 small: 12층, GPT-2 XL: 48층)
+> 같은 구조의 Block을 수십 층 반복. Layer마다 Value가 전달, 누적되며 여러 단계를 거친 관계 연결이 가능해짐
 
-### Before: Block이 하나뿐이면
+- Layer 수: GPT-2 small 12 / GPT-3 96 / Llama 3 8B 32 / Llama 3 70B 80
 
-한 번의 Attention으로는 **직접 연결된 정보만** 가져온다. 마지막 `?` 위치는 `그 사람`을 볼 수는 있지만, 그 시점의 `그 사람`은 아직 민수 정보를 갖고 있지 않을 수 있다.
+### Block 1개일 때
 
-### After: 여러 층을 쌓으면
+- 직접 연결된 Token 정보만 1회 참조
+- 마지막 위치가 사람을 참조해도, 그 시점의 사람 벡터에 민수 정보가 아직 없을 수 있음
+
+### 여러 층일 때
 
 ```text
-Layer 1:  사람  ← 민수의 정보를 가져옴         ("그 사람 = 민수")
-Layer 2:  사주면 ← 사람(민수 포함), 사과 정보를 가져옴  ("민수에게 사과")
-Layer 3+: 마지막 위치 ← 위의 결과가 쌓인 Token들을 참고  ("답은 사과 쪽")
+Layer 1   사람     ← 민수 정보 반영                        (그 사람 = 민수)
+Layer 2   사주면   ← 사람(민수 정보 포함), 사과 정보 반영   (민수에게 사과)
+Layer 3~  마지막 위치 ← 앞 결과가 반영된 Token들 참조
 ...
-Layer 12: 마지막 위치의 최종 벡터
+Layer N   마지막 위치의 최종 벡터
 ```
 
-층마다 Value가 전달되고 쌓이면서, **사과 → 민수 → 그 사람 → 마지막 위치**처럼 여러 단계를 거친 연결이 가능해진다. (층별 역할은 설명용이며 실제로는 이렇게 깔끔하게 나뉘지 않는다)
+- 정보 전달 경로: 사과 → 민수 → 그 사람 → 마지막 위치
+- 층별 역할은 설명용. 실제로는 여러 Head, Layer에 분산됨
+- Token 자체는 바뀌지 않음. 같은 위치의 벡터가 Layer마다 갱신됨
 
-**중요:** Token이 다른 Token으로 바뀌는 게 아니다. **같은 자리의 벡터가 층마다 계속 업데이트**된다. 마지막 층의 벡터를 Hidden State라고 부른다.
+<sub>Hidden State(은닉 상태): 모델 내부의 벡터. 보통 마지막 Layer의 출력을 지칭</sub>
 
 ---
 
-## 10. 출력 — 벡터를 단어 점수로 바꾼다
+## 10. 출력: Hidden State → 다음 Token 확률
 
-다음 단어 예측에는 **마지막 위치의 벡터 하나**만 쓴다. 앞의 모든 정보가 Attention으로 이미 여기에 모여 있기 때문이다.
+> 마지막 위치의 Hidden State를 사전 전체 Token에 대한 점수로 바꾸고, Softmax로 확률화한 뒤 1개 선택
+
+- 마지막 위치만 사용하는 이유: Causal Attention으로 앞쪽 모든 Token의 정보가 마지막 위치에 반영되어 있음
 
 ```text
-마지막 위치 벡터 (768)
-   ↓  LayerNorm → lm_head (768 → 50,257)
-Logits: 사전의 모든 Token마다 점수 하나
-
+마지막 위치 Hidden State (d차원)
+   ↓ Norm → lm_head (d → 사전 크기)
+Logits (사전의 모든 Token별 점수)
    사과    8.4
    바나나  5.1
    포도    4.0
    꽃      3.2
    ...
-   ↓  Softmax (위 4개만 놓고 계산한 예)
-확률:  사과 95%   바나나 3.5%   포도 1.2%   꽃 0.5%
-   ↓  선택
-"사과"
+   ↓ Softmax (위 4개만으로 계산한 예)
+확률: 사과 95%, 바나나 3.5%, 포도 1.2%, 꽃 0.5%
+   ↓ 선택
+사과
 ```
 
-- **Logits:** 아직 확률이 아닌 원점수.
-- **Softmax:** 점수를 합이 100%인 확률로 바꾼다.
-- **선택:** 가장 높은 것을 고르거나, 확률에 따라 뽑는다(샘플링). 매번 답변이 조금씩 다른 이유가 샘플링이다.
+선택 방식
+- Greedy: 확률이 가장 높은 Token 선택
+- Sampling: 확률에 비례해 무작위 선택. 같은 질문에 답변이 달라지는 원인
+- Temperature: 확률 분포의 쏠림 정도를 조정하는 값. 높을수록 다양한 Token 선택
 
-> GPT-2에서는 `lm_head`가 Embedding 표(2번)와 **같은 가중치를 공유**한다. "ID → 벡터"를 거꾸로 해서 "벡터 → 각 ID와의 유사도 점수"를 내는 셈이다.
+- GPT-2 등 일부 모델은 lm_head와 Embedding 표가 같은 가중치를 공유
+
+<sub>Logits(로짓): Softmax 적용 전의 원점수<br>lm_head(출력층): Hidden State를 사전 크기의 점수 벡터로 바꾸는 Linear<br>Greedy(탐욕적 선택), Sampling(샘플링), Temperature(온도)</sub>
 
 ---
 
-## 11. 생성은 여기서 끝나지 않는다
+## 11. 생성 반복
+
+> LLM은 Token을 1개씩 생성. 생성한 Token을 입력 뒤에 붙여 다음 Token을 다시 계산
 
 ```text
 그럼 그 사람에게 뭘 사주면 좋을까?
@@ -388,7 +466,7 @@ Logits: 사전의 모든 Token마다 점수 하나
                   사과
 ```
 
-이제 `사과`가 포함된 문맥으로 다시 처음(1번)부터 계산한다.
+사과가 포함된 문맥으로 다음 Token 계산
 
 ```text
 ... 뭘 사주면 좋을까? 사과
@@ -399,78 +477,120 @@ Logits: 사전의 모든 Token마다 점수 하나
 ```
 
 ```text
-문맥 → [1~10 전체 계산] → 다음 Token 1개 → 문맥 뒤에 붙임 → 다시 계산 → … → 종료 Token
+문맥 → 1~10단계 계산 → 다음 Token 1개 → 문맥 뒤에 추가 → 다시 계산 → ... → 종료 Token
 ```
 
-LLM은 **한 번에 한 Token씩**만 만든다. 긴 답변은 이 반복의 결과다.
+- 종료 조건: 종료 Token 생성 또는 최대 길이 도달
+
+실제 LLM
+- KV Cache 사용: 앞쪽 Token의 Key, Value를 저장해 두고 새 Token 계산만 추가 → 매번 전체를 다시 계산하지 않음
+- Context Window: GPT-2 1,024 Token / 최근 LLM 128,000 Token 이상
+
+<sub>KV Cache(키-값 캐시): 이전 Token의 Key, Value를 저장하는 공간<br>Context Window(컨텍스트 윈도우): 모델이 한 번에 참조할 수 있는 최대 Token 수</sub>
 
 ---
 
-## 12. 이 숫자들은 누가 정했나 — 학습
+## 12. 학습: 가중치 결정 과정
 
-Embedding 표, Q·K·V 행렬, FFN 가중치는 모두 처음엔 무작위 값이다. 학습은 단 하나의 과제를 반복한다.
+> Embedding, Q·K·V 행렬, FFN 등 모든 가중치는 무작위 값에서 시작. 다음 Token 예측 오차를 줄이는 방향으로 반복 수정
+
+### 사전학습
 
 ```text
-"민수는 사과를"  →  모델 예측: 다음은? (정답: "좋아해")
-     ↓
-예측 확률과 정답 비교 → Loss (얼마나 틀렸나)
-     ↓
-Backpropagation → 모든 가중치를 정답 확률이 올라가는 방향으로 조금씩 수정
-     ↓
-수십억 문장으로 반복
+입력: 민수는 사과를     정답: 좋아해
+  ↓ 모델 예측
+예측 확률과 정답 비교 → Loss
+  ↓ Backpropagation
+모든 가중치를 정답 확률이 높아지는 방향으로 수정
+  ↓
+수조 개 Token 규모의 텍스트로 반복
 ```
 
-다음 단어를 잘 맞히려다 보니, 문법·대명사가 가리키는 대상·사실 관계 같은 패턴이 가중치에 담긴다.
+- 다음 Token을 맞히는 과정에서 문법, 지시 대상, 사실 관계 등의 패턴이 가중치에 반영됨
 
-| | Training (학습) | Inference (추론) |
+### 사후학습 (대화형 LLM)
+
+- 사전학습만 한 모델은 문장 이어쓰기만 가능. 질문에 답하는 형식은 추가 학습 필요
+- SFT: 질문-답변 예시 데이터로 추가 학습
+- RLHF: 사람이 더 낫다고 평가한 답변이 나오도록 추가 학습
+- ChatGPT, Claude 등 대화형 서비스는 사전학습 + 사후학습을 거친 모델
+
+| 구분 | Training | Inference |
 |---|---|---|
-| 목적 | 가중치를 조정 | 고정된 가중치로 답 생성 |
-| 흐름 | 예측 → Loss → 역전파 → 수정 | 예측 → 선택 → 붙이기 → 반복 |
+| 목적 | 가중치 조정 | 고정된 가중치로 답변 생성 |
+| 흐름 | 예측 → Loss → 역전파 → 수정 | 예측 → 선택 → 추가 → 반복 |
+
+<sub>Loss(손실): 예측과 정답의 차이를 나타내는 값<br>Backpropagation(역전파): Loss를 기준으로 각 가중치의 수정 방향을 계산하는 알고리즘<br>Pre-training(사전학습) / Post-training(사후학습)<br>SFT(Supervised Fine-Tuning, 지도 미세조정)<br>RLHF(Reinforcement Learning from Human Feedback, 인간 피드백 기반 강화학습)<br>Training(학습) / Inference(추론): 가중치를 만드는 과정 / 만든 가중치로 결과를 생성하는 과정</sub>
 
 ---
 
-## 13. 정리 — 데이터는 이렇게 변한다
+## 13. 정리: 단계별 데이터 변화
 
-| 단계 | 데이터 (GPT-2 small, Token T개 기준) | 이 단계가 없으면 |
+T: Token 수, d: 벡터 차원, V: 사전 크기
+
+| 단계 | 데이터 | 이 단계가 없을 때 |
 |---|---|---|
-| 문장 | 문자열 | — |
+| 입력 | 문자열 | - |
 | Tokenizer | 정수 T개 | 계산 불가 |
-| Embedding | T × 768 실수 | 비슷함을 계산 못 함 |
-| + Position | T × 768 (위치 반영) | 순서를 모름 |
-| Attention × 12 Head | T × 768 (문맥 섞임) | 각 Token이 고립됨 |
-| FFN | T × 768 (가공됨) | 모은 정보가 정리 안 됨 |
-| Residual · LayerNorm | T × 768 | 깊게 쌓으면 정보 손실·불안정 |
-| Block × 12 | T × 768 | 먼 관계를 못 이음 |
-| lm_head | 마지막 위치 1 × 50,257 점수 | 단어로 못 바꿈 |
-| Softmax → 선택 | Token 1개 | — |
-| 반복 | 문장 | 한 단어로 끝남 |
+| Embedding | T × d | Token 간 유사도 계산 불가 |
+| Position | T × d | 순서 구분 불가 |
+| Self-Attention (Multi-Head) | T × d | Token 간 정보 교환 불가 |
+| FFN | T × d | 수집한 정보가 변환되지 않음 |
+| Residual, Norm | T × d | 깊은 Layer에서 정보 손실, 학습 불안정 |
+| Block × N | T × d | 여러 단계를 거친 관계 연결 불가 |
+| lm_head | 1 × V (마지막 위치) | Token으로 변환 불가 |
+| Softmax, 선택 | Token 1개 | - |
+| 생성 반복 | 문장 | Token 1개로 종료 |
 
-> **Transformer = 각 Token이 질문(Q)하고, 이름표(K)를 보고 필요한 내용(V)을 가져와 자기 벡터에 쌓는 일을 여러 층 반복하는 구조.**
-> **LLM = 그렇게 만든 마지막 벡터로 다음 Token을 하나씩 고르는 반복.**
+- Transformer: 각 Token이 Query로 필요한 정보를 찾고, Key로 대상을 비교하고, Value를 가져와 자기 벡터에 누적하는 과정을 여러 Layer에서 반복하는 구조
+- LLM: Transformer의 마지막 위치 벡터로 다음 Token을 1개씩 선택하는 과정을 반복
 
 ---
 
-## 14. 코드에서 확인하기 (`build-nanogpt/train_gpt2.py`)
+## 14. GPT-2와 최근 LLM 비교
+
+| 항목 | GPT-2 small (2019) | GPT-3 (2020) | Llama 3 8B (2024) |
+|---|---|---|---|
+| 파라미터 | 1.24억 | 1,750억 | 80억 |
+| Layer 수 | 12 | 96 | 32 |
+| 벡터 차원 | 768 | 12,288 | 4,096 |
+| Head 수 | 12 | 96 | Query 32 / Key·Value 8 |
+| 사전 크기 | 50,257 | 50,257 | 128,256 |
+| Context Window | 1,024 | 2,048 | 8,192 (3.1 버전: 128K) |
+| 위치 정보 | 학습형 위치 벡터 | 학습형 위치 벡터 | RoPE |
+| 정규화 | LayerNorm | LayerNorm | RMSNorm |
+| FFN 활성화 함수 | GELU | GELU | SwiGLU |
+
+- GPT-4 이후 OpenAI 모델, Claude 등은 구조 세부를 공개하지 않음
+- 공개 모델 기준으로 기본 골격(Decoder-only, Causal Self-Attention, FFN, Residual, Block 반복, 다음 Token 예측)은 동일
+
+---
+
+## 15. 코드 대응: build-nanogpt/train_gpt2.py
 
 | 개념 | 위치 | 코드 |
 |---|---|---|
-| Embedding / Position | `GPT.__init__` L86–87 | `wte = nn.Embedding(vocab_size, n_embd)`, `wpe = nn.Embedding(block_size, n_embd)` |
-| Token + Position | `GPT.forward` L116–118 | `x = tok_emb + pos_emb` |
-| Q, K, V 생성 | `CausalSelfAttention` L31–32 | `qkv = self.c_attn(x)` → `q, k, v = qkv.split(...)` |
-| Head 나누기 | L33–35 | `.view(B, T, n_head, C // n_head)` |
+| Embedding, 위치 벡터 | GPT.\_\_init\_\_ L86–87 | `wte = nn.Embedding(vocab_size, n_embd)`, `wpe = nn.Embedding(block_size, n_embd)` |
+| Token + 위치 | GPT.forward L116–118 | `x = tok_emb + pos_emb` |
+| Q, K, V 생성 | CausalSelfAttention L31–32 | `qkv = self.c_attn(x)`, `q, k, v = qkv.split(...)` |
+| Head 분할 | L33–35 | `.view(B, T, n_head, C // n_head)` |
 | Causal Attention | L36 | `F.scaled_dot_product_attention(q, k, v, is_causal=True)` |
-| FFN | `MLP` L46–48 | `Linear(768→3072)` → `GELU` → `Linear(3072→768)` |
-| Residual + LayerNorm | `Block.forward` L67–68 | `x = x + self.attn(self.ln_1(x))`, `x = x + self.mlp(self.ln_2(x))` |
-| Layer 반복 | `GPT.forward` L120–121 | `for block in self.transformer.h: x = block(x)` |
+| FFN | MLP L46–48 | `Linear(768→3072)` → `GELU` → `Linear(3072→768)` |
+| Residual + LayerNorm | Block.forward L67–68 | `x = x + self.attn(self.ln_1(x))`, `x = x + self.mlp(self.ln_2(x))` |
+| Layer 반복 | GPT.forward L120–121 | `for block in self.transformer.h: x = block(x)` |
 | Logits | L123–124 | `ln_f` → `lm_head` |
 | 가중치 공유 | L94 | `wte.weight = lm_head.weight` |
-| 생성 반복 | L461–473 | 마지막 위치 logits → softmax → top-k 샘플링 → `torch.cat`으로 붙이기 |
-| 설정값 | `GPTConfig` L72–77 | `vocab_size=50257, n_layer=12, n_head=12, n_embd=768` |
+| 생성 반복 | L461–473 | 마지막 위치 logits → softmax → top-k 샘플링 → `torch.cat`으로 추가 |
+| 설정값 | GPTConfig L72–77 | `vocab_size=50257, n_layer=12, n_head=12, n_embd=768` |
 
 ---
 
 ## References
 
-1. Vaswani et al., *Attention Is All You Need*, 2017 — https://arxiv.org/abs/1706.03762
-2. Radford et al., *Language Models are Unsupervised Multitask Learners* (GPT-2), 2019
-3. Andrej Karpathy, *build-nanogpt* — https://github.com/karpathy/build-nanogpt
+1. Vaswani et al., Attention Is All You Need, 2017. https://arxiv.org/abs/1706.03762
+2. Radford et al., Language Models are Unsupervised Multitask Learners (GPT-2), 2019
+3. Brown et al., Language Models are Few-Shot Learners (GPT-3), 2020. https://arxiv.org/abs/2005.14165
+4. Kaplan et al., Scaling Laws for Neural Language Models, 2020. https://arxiv.org/abs/2001.08361
+5. Ouyang et al., Training language models to follow instructions with human feedback, 2022. https://arxiv.org/abs/2203.02155
+6. Llama Team, The Llama 3 Herd of Models, 2024. https://arxiv.org/abs/2407.21783
+7. Andrej Karpathy, build-nanogpt. https://github.com/karpathy/build-nanogpt
