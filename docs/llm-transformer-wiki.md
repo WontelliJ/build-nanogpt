@@ -1,11 +1,11 @@
-# LLM 동작 원리: 문장 입력부터 다음 Token 생성까지
+# LLM 동작 원리 (문장 입력부터 다음 Token 생성까지)
 
 ## 요약
 
-- LLM은 입력 문장을 숫자 벡터로 변환하고, Transformer에서 Token 간 정보를 교환한 뒤, 다음 Token 1개를 선택하는 과정을 반복함
-- 각 단계는 직전 단계에서 남은 한계를 해결하기 위해 존재함
+- LLM은 입력 문장을 숫자 벡터로 변환하고 Transformer에서 Token 간 정보를 교환한 뒤 다음 Token 1개를 선택하는 과정을 반복함
+- 각 단계는 직전 단계에서 남은 한계를 해결함
 - 설명 대상: GPT, Claude, Llama 등 현재 대부분의 LLM이 사용하는 Decoder-only Transformer 구조
-- 코드 참조: build-nanogpt의 GPT-2 구현. 구조가 공개되어 있고, 최근 LLM과 기본 골격이 같음
+- 코드 참조: build-nanogpt의 GPT-2 구현. 구조가 공개되어 있으며 최근 LLM과 기본 골격이 같음
 - 문서 내 Token ID, 벡터, 가중치 수치는 설명용 임의 값
 
 <sub>LLM(Large Language Model, 대규모 언어 모델): 대량의 텍스트로 학습해 다음 단어를 예측하는 신경망 모델<br>Transformer(트랜스포머): 2017년 발표된 신경망 구조. 현재 LLM의 기반<br>Decoder-only: Transformer 중 문장 생성 부분만 사용하는 구조. GPT 계열 대부분이 해당</sub>
@@ -48,7 +48,7 @@ AI:     사과를 추천해요.
 
 ---
 
-## 1. Tokenizer: 문장 → Token ID
+## 1. Tokenizer
 
 > 문장을 Token 단위로 자르고 각 Token에 사전 번호(ID)를 부여
 
@@ -70,7 +70,7 @@ ID:     [ 12 ] [ 7] [ 31 ] [ 8] [  45  ] [2]
 - 남은 한계: ID는 사전 내 위치 번호일 뿐 의미 정보 없음
 
 실제 LLM
-- 단어 단위가 아니라 자주 함께 등장하는 글자 조합 단위로 분리 (BPE 계열)
+- 단어 단위 대신 자주 함께 등장하는 글자 조합 단위로 분리 (BPE 계열)
 - 사전 크기: GPT-2 50,257개 / GPT-4 약 10만 개 / Llama 3 128,256개
 - 영어 위주로 만든 Tokenizer는 한글을 더 잘게 분리 → 같은 내용도 Token 수 증가
 
@@ -78,11 +78,11 @@ ID:     [ 12 ] [ 7] [ 31 ] [ 8] [  45  ] [2]
 
 ---
 
-## 2. Embedding: Token ID → 벡터
+## 2. Embedding
 
 > ID를 실수 여러 개로 구성된 벡터로 변환. Token 간 유사도 계산이 가능해짐
 
-### 변환 전: ID
+### 변환 전 (ID)
 
 ```text
 민수   → 12
@@ -93,10 +93,10 @@ ID:     [ 12 ] [ 7] [ 31 ] [ 8] [  45  ] [2]
 - ID 차이 기준으로는 사과(31)가 바나나(9137)보다 민수(12)에 가까움
 - ID 간 거리는 의미와 무관 → 유사도 계산 불가
 
-### 변환 후: 벡터
+### 변환 후 (벡터)
 
 - Embedding 표에서 ID 번호에 해당하는 행을 조회
-- 아래는 설명을 위해 3차원으로 축소한 예
+- 아래는 3차원으로 축소한 설명용 예
 
 ```text
 사과   → [0.9, 0.8, 0.1]
@@ -126,9 +126,9 @@ ID:     [ 12 ] [ 7] [ 31 ] [ 8] [  45  ] [2]
 
 ---
 
-## 3. Position: 위치 정보 추가
+## 3. Position
 
-> Token 벡터에 위치 정보를 더해, 같은 Token도 위치가 다르면 다른 벡터가 되도록 함
+> Token 벡터에 위치 정보를 더해서 같은 Token도 위치가 다르면 다른 벡터가 되도록 함
 
 ### 반영 전
 
@@ -172,18 +172,18 @@ Transformer 입력 = Token 벡터 + 위치 벡터
 
 ---
 
-## 4. RNN에서 Transformer로: Attention과 Position의 관계
+## 4. RNN과 Transformer
 
-> Transformer는 거리가 멀수록 문맥이 약해지는 RNN의 한계를 Attention으로 해결했고, 그 과정에서 사라진 순서 정보를 입력 단계의 Position으로 보완함
+> Transformer는 거리가 멀수록 문맥이 약해지는 RNN의 한계를 Attention으로 해결했고 그 과정에서 사라진 순서 정보를 입력 단계의 Position으로 보완함
 
-### Transformer 이전: RNN
+### Transformer 이전의 RNN
 
 ```text
 민수 → 는 → 사과 → 를 → 좋아해 → ... → 그 → 사람 → 에게 → 뭘 → 사주면
 상태 → 상태 → 상태 → ... (매 단계 이전 상태를 갱신해 전달) ... → 상태
 ```
 
-- Token을 앞에서부터 하나씩 처리하며, 이전 내용을 고정 크기 상태값 하나에 누적해 전달
+- Token을 앞에서부터 하나씩 처리하며 이전 내용을 고정 크기 상태값 하나에 누적해 전달
 - 순서 정보는 처리 순서로 자연스럽게 반영됨
 - 한계 1: 입력이 길수록 앞부분 정보가 약해짐. 예시에서 사주면까지 처리하는 시점에는 첫 문장의 민수, 사과 정보가 약해진 상태
 - 한계 2: 앞 Token 처리가 끝나야 다음 Token 처리 가능 → GPU 병렬 계산이 어려움 → 모델 규모 확대가 어려움
@@ -191,7 +191,7 @@ Transformer 입력 = Token 벡터 + 위치 벡터
 ### Transformer (2017, Attention Is All You Need)
 
 - RNN 제거
-- 각 Token이 다른 모든 Token을 직접 참조하고, 참조 비율을 가중치로 계산 (Attention)
+- 각 Token이 다른 모든 Token을 직접 참조하고 참조 비율을 가중치로 계산 (Attention)
 - 세 문장 앞의 사과도 바로 앞 Token과 같은 1단계로 참조 → 거리로 인한 정보 손실 해결
 - 모든 Token을 동시에 계산 → 병렬 처리 가능
 - 대신 순서 정보가 사라짐 → 입력 단계에서 위치 정보를 먼저 더함 (3장)
@@ -223,9 +223,9 @@ Transformer 입력 = Token 벡터 + 위치 벡터
 
 ---
 
-## 5. Self-Attention: Query, Key, Value
+## 5. Self-Attention
 
-> 각 Token이 차례로 Query가 되어 다른 Token들의 Key와 비교하고, 관련도 비율만큼 Value를 가져와 자기 벡터에 더함
+> 각 Token이 차례로 Query가 되어 다른 Token들의 Key와 비교하고 관련도 비율만큼 Value를 가져와 자기 벡터에 더함
 
 ### Q, K, V 정의
 
@@ -253,7 +253,7 @@ Transformer 입력 = Token 벡터 + 위치 벡터
 
 <sub>Self-Attention(셀프 어텐션): 같은 입력 안의 Token끼리 수행하는 Attention<br>Query / Key / Value: 질의 / 키 / 값. 줄여서 Q, K, V<br>Softmax(소프트맥스): 점수 목록을 0~1 사이, 합이 1인 비율로 바꾸는 함수<br>Causal Attention(인과적 어텐션): 뒤쪽 Token을 가려 앞쪽만 참조하도록 제한한 Attention. 가리는 처리를 Causal Mask라고 함<br>d: Q, K 벡터의 차원 수</sub>
 
-### 예시 1: 사람이 Query일 때
+### 예시 1. 사람이 Query일 때
 
 ```text
 Query(사람): 가리키는 대상이 누구인가
@@ -272,7 +272,7 @@ Attention 결과(사람) = 0.70×V(민수) + 0.12×V(그) + 0.08×V(과일 가�
 - 적용 전: 사람 = 대상이 정해지지 않은 일반 명사
 - 적용 후: 사람 = 민수 정보가 70% 반영된 벡터 → 그 사람 = 민수 연결
 
-### 예시 2: 사주면이 Query일 때
+### 예시 2. 사주면이 Query일 때
 
 ```text
 Query(사주면): 무엇을 사 줘야 하는가
@@ -332,7 +332,7 @@ Query(사주면): 무엇을 사 줘야 하는가
 
 ---
 
-## 7. FFN: Token별 변환
+## 7. FFN
 
 > Attention은 다른 Token에서 정보를 가져오는 단계, FFN은 각 Token이 가져온 정보를 개별적으로 변환하는 단계
 
@@ -424,9 +424,9 @@ Layer N   마지막 위치의 최종 벡터
 
 ---
 
-## 10. 출력: Hidden State → 다음 Token 확률
+## 10. 출력
 
-> 마지막 위치의 Hidden State를 사전 전체 Token에 대한 점수로 바꾸고, Softmax로 확률화한 뒤 1개 선택
+> 마지막 위치의 Hidden State를 사전 전체 Token에 대한 점수로 바꾸고 Softmax로 확률화한 뒤 1개 선택
 
 - 마지막 위치만 사용하는 이유: Causal Attention으로 앞쪽 모든 Token의 정보가 마지막 위치에 반영되어 있음
 
@@ -490,7 +490,7 @@ Logits (사전의 모든 Token별 점수)
 
 ---
 
-## 12. 학습: 가중치 결정 과정
+## 12. 학습
 
 > Embedding, Q·K·V 행렬, FFN 등 모든 가중치는 무작위 값에서 시작. 다음 Token 예측 오차를 줄이는 방향으로 반복 수정
 
@@ -524,7 +524,7 @@ Logits (사전의 모든 Token별 점수)
 
 ---
 
-## 13. 정리: 단계별 데이터 변화
+## 13. 단계별 데이터 변화
 
 T: Token 수, d: 벡터 차원, V: 사전 크기
 
@@ -542,7 +542,7 @@ T: Token 수, d: 벡터 차원, V: 사전 크기
 | Softmax, 선택 | Token 1개 | - |
 | 생성 반복 | 문장 | Token 1개로 종료 |
 
-- Transformer: 각 Token이 Query로 필요한 정보를 찾고, Key로 대상을 비교하고, Value를 가져와 자기 벡터에 누적하는 과정을 여러 Layer에서 반복하는 구조
+- Transformer: 각 Token이 Query로 필요한 정보를 찾고 Key로 대상을 비교한 뒤 Value를 가져와 자기 벡터에 누적하는 과정을 여러 Layer에서 반복하는 구조
 - LLM: Transformer의 마지막 위치 벡터로 다음 Token을 1개씩 선택하는 과정을 반복
 
 ---
@@ -566,7 +566,7 @@ T: Token 수, d: 벡터 차원, V: 사전 크기
 
 ---
 
-## 15. 코드 대응: build-nanogpt/train_gpt2.py
+## 15. 코드 대응 (build-nanogpt/train_gpt2.py)
 
 | 개념 | 위치 | 코드 |
 |---|---|---|
