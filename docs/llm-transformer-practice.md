@@ -1,6 +1,6 @@
 # LLM 동작 원리: 코드 대응과 실습
 
-- 본문(llm-transformer-wiki.md)의 각 단계가 실제 코드 어디에 있는지, 직접 해볼 수 있는 오픈소스 실습을 모았다.
+- 본문(llm-transformer-wiki.md)의 각 단계가 실제 코드 어디에 있는지, 직접 해볼 수 있는 오픈소스 실습, 본문에서 뺀 심화 내용을 모았다.
 
 ---
 
@@ -151,3 +151,56 @@ git log --reverse --oneline master
 - 이 저장소는 빈 파일에서 GPT-2 재현까지 한 단계씩 커밋해 두었다. 커밋을 순서대로 checkout하며 train_gpt2.py가 늘어나는 과정을 볼 수 있다.
 - 같은 내용의 강의 영상이 README에 연결되어 있다(https://youtu.be/l8pRSuU81PU).
 - 전체 학습(FineWeb 데이터 100억 Token)은 GPU가 필요하다. 코드를 읽고 위 코드 대응 표의 줄 번호와 맞춰 보는 용도로 쓰기 좋다.
+
+---
+
+## 본문에서 뺀 심화 내용
+
+본문을 짧게 유지하려고 뺀 내용이다. 단계 순서대로 적었다.
+
+### Token: 바이트 단위 BPE
+
+- 사전의 출발점은 정확히는 글자가 아니라 바이트 256개다. 그래서 사전에 없는 글자도 바이트 조각을 이어 붙여 만들 수 있다.
+- 문장을 자를 때는 사전을 만들 때 배운 합치기 순서를 그대로 적용한다.
+
+### Position Information: 왜 더하나, RNN, RoPE
+
+- 위치 벡터를 이어 붙이지 않고 더하면 벡터 칸 수가 늘지 않아 이후 계산 구조를 그대로 쓸 수 있다. 칸이 수백 개라 학습 과정에서 Token 정보와 위치 정보가 서로 다른 방향을 쓰게 되어 더해도 섞여 사라지지 않는다.
+- Transformer 이전에 쓰던 RNN(Recurrent Neural Network, 순환 신경망)은 한 단어씩 순서대로 읽어서 순서는 알았다. 하지만 읽은 내용을 작은 기억 하나에 계속 덮어쓰며 넘겨서 문장이 길면 앞 내용이 흐려졌다.
+- 최근 LLM 다수는 RoPE(Rotary Position Embedding, 회전 위치 임베딩)를 쓴다. 내용 벡터에는 위치를 더하지 않고 Attention에서 Query와 Key를 자리 번호에 비례하는 각도로 회전시켜 위치를 반영한다.
+
+### Self-Attention: 용어
+
+- Attention Score: Query와 Key를 비교한 관련도 점수
+- Attention Weight: 점수를 Softmax로 바꾼 비율
+- Block마다 Query, Key, Value를 만드는 가중치가 따로 있어서 Block마다 찾는 정보가 달라진다.
+- 문법 관계 예: "민수는 포도를 싫어하고 사과를 좋아해"에서 '좋아해'는 더 가까운 '포도'보다 바로 앞 목적어 '사과'에 높은 비율을 준다. '포도'는 '싫어하고'가 가져간다.
+
+### Multi-Head Attention: 크기
+
+- GPT-2의 각 Head는 64칸짜리 Query, Key, Value를 만든다. 12개 Head의 결과(64칸 × 12 = 768칸)를 이어 붙인 뒤 가중치를 한 번 더 곱해 하나의 벡터로 합친다.
+
+### Feed Forward Network: GELU
+
+- GPT 계열의 활성화 함수는 GELU다. 음수 점수를 0 가까이 줄인다. 예: 2.1 → 2.06, -0.8 → -0.17, -1.5 → -0.10
+- GELU가 줄이는 것은 Token이나 Value가 아니라 3072개 패턴 중 지금 입력과 맞지 않는 패턴이다.
+
+### Residual Connection, Layer Normalization
+
+- Residual Connection은 학습할 때 고쳐야 할 방향(기울기)이 앞쪽 Block까지 잘 전달되게 해 깊은 모델을 학습할 수 있게 한다.
+- 최근 모델은 평균은 두고 크기만 맞추는 RMSNorm을 많이 쓴다.
+
+### Next Token: Top-k
+
+- 상위 k개 후보 안에서만 확률대로 뽑는 방식이다. 엉뚱한 Token이 뽑히는 것을 막는다. train_gpt2.py는 상위 50개를 쓴다.
+
+### 반복: Prefill, Decode, KV Cache
+
+| 계산 | 처리하는 Token | 이름 |
+|---|---|---|
+| 첫 번째 | 질문을 포함한 대화 전체를 한꺼번에 | Prefill |
+| 두 번째 이후 | 새로 붙은 Token 하나씩 | Decode |
+
+- Decode 단계에서는 새 Token만 Embedding과 다음 자리 위치 벡터부터 계산한다. 고른 Token은 이미 Token ID라서 자르는 과정이 필요 없다.
+- 앞 Token들의 Key, Value는 저장해 두고 Attention에서 다시 쓴다. 이 저장 공간을 KV Cache라고 한다.
+- train_gpt2.py처럼 KV Cache 없이 매번 전체 문장을 처음부터 다시 계산하는 단순한 구현도 있다. 결과는 같고 속도만 느리다.
