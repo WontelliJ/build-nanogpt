@@ -2,6 +2,8 @@
 
 복잡한 기술 개념을 조사하고 일반인도 따라올 수 있는 문서로 정리할 때 쓰는 기준이다. LLM 동작 원리 문서(llm-transformer-wiki.md)를 만들며 정한 방식을 일반화했다. 맨 아래에 그대로 붙여 쓰는 프롬프트가 있다.
 
+같은 내용을 Claude 스킬로 만들어 .claude/skills/concept-explainer/에 두었다. 이 저장소에서 Claude Code를 쓰면 개념 설명 문서를 요청할 때 자동으로 적용된다.
+
 ---
 
 ## 1. 목표
